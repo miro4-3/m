@@ -1,5 +1,8 @@
-pub const CHUNK_WIDTH: usize = 16;
+pub const CHUNK_WIDTH: usize = 32;
+/// Same value as `CHUNK_WIDTH`, for signed world-coordinate math.
+pub const CHUNK_WIDTH_I32: i32 = CHUNK_WIDTH as i32;
 
+/// (neighbour offset, 4 corners, brightness) for +X, -X, +Y, -Y, +Z, -Z.
 pub const FACES: [([i32; 3], [[f32; 3]; 4], f32); 6] = [
     ([ 1, 0, 0], [[1.,0.,0.],[1.,1.,0.],[1.,1.,1.],[1.,0.,1.]], 0.8),
     ([-1, 0, 0], [[0.,0.,1.],[0.,1.,1.],[0.,1.,0.],[0.,0.,0.]], 0.8),
@@ -9,4 +12,6 @@ pub const FACES: [([i32; 3], [[f32; 3]; 4], f32); 6] = [
     ([ 0, 0,-1], [[1.,0.,0.],[0.,0.,0.],[0.,1.,0.],[1.,1.,0.]], 0.9),
 ];
 
+
 pub const MAX_FACES_PER_MESH: usize = 800;
+const _: () = assert!(MAX_FACES_PER_MESH * 4 <= u16::MAX as usize);
