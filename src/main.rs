@@ -3,16 +3,17 @@ use macroquad::prelude::*;
 
 mod game;
 mod constant;
-use game::world_gen::world::World;
+use game::world_gen::world::{View, World};
 
-use crate::constant::CHUNK_WIDTH;
 use crate::game::player::settings::{RenderDistance, RenderSettings};
-use crate::game::world_gen::voxel::{self, Voxel};
+use crate::game::world_gen::voxel::Voxel;
 use crate::game::player::{character};
 use crate::game::world_gen::world_generation::generate_chunk;
 
 
 const LOOK_SPEED: f32 = 0.1;
+/// Chunks meshed per frame while moving, so new terrain doesn't cause a stutter.
+const MESHES_PER_FRAME: usize = 16;
 
 
 
@@ -33,10 +34,10 @@ async fn main() {
     show_mouse(false);
     let mut move_speed: f32 = 5.0;
     let mut mouse_lock = true;
-    let mut render_settings: RenderSettings = RenderSettings { render_distance: RenderDistance { x: 8,y: 8, z: 8 } };
+    let render_settings: RenderSettings = RenderSettings { render_distance: RenderDistance { x: 8,y: 8, z: 8 } };
     let mut world = World::new();
     
-    let mut player_position = vec3(-3.0, 4.0, -3.0);
+    let mut player_position = vec3(0.0, 0.0, 0.0);
     
     let mut yaw: f32 = 1.18;
     let mut pitch: f32 = -0.4;
@@ -45,22 +46,22 @@ async fn main() {
     
     for cx in 0..16 {
             for cz in 0..16 {
-            for cy in 0..1 {
+            for cy in -1..1 {
                     world.insert((cx, cy, cz), generate_chunk(cx, cy, cz, Voxel::DIRT));
             }
             
         }
     }
-   
+
+    // mesh everything in view before the first frame, so nothing pops in at start-up
+    world.rebuild_dirty(&View::new(player_position, &render_settings.render_distance), usize::MAX);
 
     loop {
         let dt = get_frame_time();
         clear_background(SKYBLUE);
         
         character::spectator_mode_start(mouse_lock, &mut move_speed, &mut last_mouse, &mut yaw, &mut pitch, dt, up_vector, &mut player_position);
-        let player_chunk_x = (player_position.x / CHUNK_WIDTH as f32).floor() as i32;
-        let player_chunk_y = (player_position.y / CHUNK_WIDTH as f32).floor() as i32;
-        let player_chunk_z = (player_position.z / CHUNK_WIDTH as f32).floor() as i32;
+        let view = View::new(player_position, &render_settings.render_distance);
         
         // Drawing 3D
         unsafe {
@@ -69,17 +70,18 @@ async fn main() {
             macroquad::miniquad::gl::glFrontFace(macroquad::miniquad::gl::GL_CCW);
         } // cull backface
         
-        world.rebuild_dirty();
-        world.draw();
+        world.rebuild_dirty(&view, MESHES_PER_FRAME);
+        world.draw(&view);
 
         // 2D pass (HUD)
         set_default_camera();
         unsafe {macroquad::miniquad::gl::glDisable(macroquad::miniquad::gl::GL_CULL_FACE)} // disable culling
         draw_text(&format!("{}", get_fps()), 10.0, 20.0, 24.0, WHITE);
         draw_text(&format!("pos: {:.1}, {:.1}, {:.1}", player_position.x, player_position.y, player_position.z), 10.0, 40.0, 24.0, WHITE);
-                draw_text(&format!("pos: {:.1}, {:.1}, {:.1}", player_chunk_x, player_chunk_y, player_chunk_z), 10.0, 90.0, 24.0, WHITE);
+        let (cx, cy, cz) = view.center();
+        draw_text(&format!("chunk: {}, {}, {}", cx, cy, cz), 10.0, 100.0, 24.0, WHITE);
         draw_text(&format!("yaw: {:.2}, pitch: {:.2}", yaw, pitch), 10.0, 60.0, 24.0, WHITE);
-        draw_text(&format!("faces: {}", world.face_count()), 10.0, 85.0, 24.0, WHITE);
+        draw_text(&format!("faces: {}", world.face_count(&view)), 10.0, 80.0, 24.0, WHITE);
         if is_key_pressed(KeyCode::G) {
             if mouse_lock {
                 mouse_lock = false;

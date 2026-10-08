@@ -1,4 +1,7 @@
-//! Greedy meshing: merges neighbouring same-type voxel faces into larger quads.
+//! Binary greedy meshing, after <https://github.com/cgerikj/binary-greedy-meshing>.
+//!
+//! Solid voxels are packed into bit columns, so finding exposed faces and merging
+//! them into rectangles works on a whole row of voxels per machine instruction.
 
 use macroquad::{
     color::Color,
@@ -11,6 +14,11 @@ use crate::{
     game::world_gen::{chunk::STRIDE, voxel::Voxel},
 };
 
+/// One bit per voxel along a row or column.
+type Bits = u32;
+const _: () = assert!(N <= Bits::BITS as usize && Voxel::KINDS <= Bits::BITS as usize);
+const _: () = assert!(STRIDE[0] == 1);
+
 /// Voxels of the six face-adjacent chunks in `FACES` order. `None` (not loaded) counts as air.
 pub type Neighbours<'a> = [Option<&'a [Voxel]>; 6];
 
@@ -19,29 +27,52 @@ static AIR_CHUNK: [Voxel; N * N * N] = [Voxel::AIR; N * N * N];
 /// For each normal axis: the two other axes, fastest-varying in memory first.
 const TANGENTS: [(usize, usize); 3] = [(2, 1), (0, 2), (0, 1)];
 
-/// One slice of visible faces, indexed `v * N + u`. `Voxel::AIR` means "no face".
-type Mask = [Voxel; N * N];
+/// `columns[axis][v * N + u]`: bit `s` is set when the voxel at slice `s` along `axis` is solid.
+type Columns = [[Bits; N * N]; 3];
+
+/// Exposed faces of one slice, one plane per voxel type: `planes[slice][kind][v]` has bit `u` set.
+type Planes = [[[Bits; N]; Voxel::KINDS]; N];
 
 pub fn greedy_mesh(voxels: &[Voxel], key: (i32, i32, i32), neighbours: Neighbours) -> Vec<Mesh> {
-    if voxels.iter().all(|v| !v.is_solid()) {
+    let Some(columns) = solid_columns(voxels) else {
         return Vec::new();
-    }
+    };
     let mut mesher = Mesher {
         voxels,
         neighbours,
+        columns,
         origin: [key.0 * W, key.1 * W, key.2 * W],
-        mask: [Voxel::AIR; N * N],
+        planes: [[[0; N]; Voxel::KINDS]; N],
+        touched: [0; N],
         out: MeshBuilder::default(),
     };
     for (index, (normal, corners, shade)) in FACES.iter().enumerate() {
         let face = Face::new(index, *normal, *corners, *shade);
-        for slice in 0..N {
-            if mesher.fill_mask(&face, slice) {
-                mesher.emit_quads(&face, slice);
-            }
-        }
+        mesher.collect_exposed(&face);
+        mesher.emit_quads(&face);
     }
     mesher.out.finish()
+}
+
+/// Packs solidity into bit columns along all three axes. `None` if the chunk is empty.
+fn solid_columns(voxels: &[Voxel]) -> Option<Columns> {
+    let mut columns = [[0; N * N]; 3];
+    let mut any = 0;
+    for y in 0..N {
+        for z in 0..N {
+            let row = &voxels[y * STRIDE[1] + z * STRIDE[2]..][..N];
+            let mut along_x = 0;
+            for (x, voxel) in row.iter().enumerate() {
+                let solid = voxel.is_solid() as Bits;
+                along_x |= solid << x;
+                columns[1][z * N + x] |= solid << y;
+                columns[2][y * N + x] |= solid << z;
+            }
+            columns[0][y * N + z] = along_x;
+            any |= along_x;
+        }
+    }
+    (any != 0).then_some(columns)
 }
 
 struct Face {
@@ -76,57 +107,70 @@ impl Face {
 struct Mesher<'a> {
     voxels: &'a [Voxel],
     neighbours: Neighbours<'a>,
+    columns: Columns,
     origin: [i32; 3],
-    mask: Mask,
+    planes: Planes,
+    /// Per slice: bit `k` set when `planes[slice][k]` holds faces.
+    touched: [Bits; N],
     out: MeshBuilder,
 }
 
 impl Mesher<'_> {
-    /// Marks every voxel in the slice whose face is exposed. Returns false if none is.
-    fn fill_mask(&mut self, f: &Face, slice: usize) -> bool {
-        let (su, sv) = (STRIDE[f.u], STRIDE[f.v]);
-        let next = slice as i32 + f.step;
-        let behind = if (0..W).contains(&next) {
-            self.voxels
-        } else {
-            self.neighbours[f.index].unwrap_or(&AIR_CHUNK[..])
-        };
-        let here = slice * STRIDE[f.d];
-        let there = next.rem_euclid(W) as usize * STRIDE[f.d];
-        let mut any = false;
+    /// Sorts every exposed face of this direction into the plane of its slice and voxel type.
+    fn collect_exposed(&mut self, f: &Face) {
+        let (su, sv, sd) = (STRIDE[f.u], STRIDE[f.v], STRIDE[f.d]);
+        let positive = f.step > 0;
+        let behind = self.neighbours[f.index].unwrap_or(&AIR_CHUNK[..]);
+        let touching_slice = if positive { 0 } else { N - 1 };
 
         for b in 0..N {
             for a in 0..N {
-                let offset = a * su + b * sv;
-                let voxel = self.voxels[here + offset];
-                let exposed = voxel.is_solid() && !behind[there + offset].is_solid();
-                self.mask[b * N + a] = if exposed { voxel } else { Voxel::AIR };
-                any |= exposed;
+                let column = self.columns[f.d][b * N + a];
+                let beyond = behind[touching_slice * sd + a * su + b * sv].is_solid() as Bits;
+                let covered = if positive { column >> 1 | beyond << (N - 1) } else { column << 1 | beyond };
+
+                let mut exposed = column & !covered;
+                while exposed != 0 {
+                    let s = exposed.trailing_zeros() as usize;
+                    exposed &= exposed - 1;
+                    let kind = self.voxels[s * sd + a * su + b * sv].kind();
+                    self.planes[s][kind][b] |= 1 << a;
+                    self.touched[s] |= 1 << kind;
+                }
             }
         }
-        any
     }
 
-    /// Grows each face right, then down, while the voxel type matches, and emits the rectangle.
-    fn emit_quads(&mut self, f: &Face, slice: usize) {
+    fn emit_quads(&mut self, f: &Face) {
+        for s in 0..N {
+            let mut kinds = std::mem::take(&mut self.touched[s]);
+            while kinds != 0 {
+                let kind = kinds.trailing_zeros() as usize;
+                kinds &= kinds - 1;
+                let color = shaded(Voxel::from_kind(kind).color(), f.shade);
+                self.merge_plane(f, s, kind, color);
+            }
+        }
+    }
+
+    /// Takes the widest run of faces from a row, then grows it down while the rows below match.
+    fn merge_plane(&mut self, f: &Face, s: usize, kind: usize, color: Color) {
+        let plane = &mut self.planes[s][kind];
         for b in 0..N {
-            let mut a = 0;
-            while a < N {
-                let voxel = self.mask[b * N + a];
-                if !voxel.is_solid() {
-                    a += 1;
-                    continue;
+            let mut row = std::mem::take(&mut plane[b]);
+            while row != 0 {
+                let a = row.trailing_zeros();
+                let w = (row >> a).trailing_ones();
+                let run = (Bits::MAX >> (Bits::BITS - w)) << a;
+                row &= !run;
+
+                let mut h = 1;
+                while b + h < N && plane[b + h] & run == run {
+                    plane[b + h] &= !run;
+                    h += 1;
                 }
-                let w = 1 + (a + 1..N).take_while(|&i| self.mask[b * N + i] == voxel).count();
-                let h = 1 + (b + 1..N)
-                    .take_while(|&j| self.mask[j * N + a..j * N + a + w].iter().all(|&m| m == voxel))
-                    .count();
-                for j in b..b + h {
-                    self.mask[j * N + a..j * N + a + w].fill(Voxel::AIR);
-                }
-                let corners = f.quad(self.origin, slice, a, b, w, h);
-                self.out.quad(corners, shaded(voxel.color(), f.shade));
-                a += w;
+                let corners = f.quad(self.origin, s, a as usize, b, w as usize, h);
+                self.out.quad(corners, color);
             }
         }
     }
@@ -171,7 +215,6 @@ impl MeshBuilder {
         self.meshes
     }
 }
-
 
 #[cfg(test)]
 mod tests {

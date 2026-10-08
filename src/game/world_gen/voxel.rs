@@ -11,6 +11,17 @@ impl Voxel {
     pub const GRASS: Voxel = Voxel { id: 2 };
     pub const STONE: Voxel = Voxel { id: 3 };
 
+    /// Number of voxel types, air included. Every `kind()` is below this.
+    pub const KINDS: usize = 4;
+
+    /// Dense index of this voxel type, usable as an array index.
+    pub fn kind(self) -> usize {
+        self.id as usize
+    }
+
+    pub fn from_kind(kind: usize) -> Voxel {
+        Voxel { id: kind as u16 }
+    }
 
     pub fn is_solid(self) -> bool {
         self != Voxel::AIR
@@ -40,6 +51,15 @@ mod tests {
     fn only_air_is_not_solid() {
         assert!(!Voxel::AIR.is_solid());
         assert!(Voxel::DIRT.is_solid() && Voxel::GRASS.is_solid() && Voxel::STONE.is_solid());
+    }
+
+    #[test]
+    fn kinds_are_dense_and_round_trip() {
+        let all = [Voxel::AIR, Voxel::DIRT, Voxel::GRASS, Voxel::STONE];
+        let mut kinds: Vec<_> = all.iter().map(|v| v.kind()).collect();
+        kinds.sort();
+        assert_eq!(kinds, (0..Voxel::KINDS).collect::<Vec<_>>());
+        assert!(all.iter().all(|&v| Voxel::from_kind(v.kind()) == v));
     }
 
     #[test]

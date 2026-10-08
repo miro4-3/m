@@ -1,4 +1,4 @@
-use macroquad::{camera::{Camera3D, set_camera}, input::{is_key_down, is_key_pressed, mouse_position}, math::{Vec2, Vec3, vec3}};
+use macroquad::{camera::{Camera3D, set_camera}, input::{is_key_down, mouse_position}, math::{Vec2, Vec3, vec3}};
 use macroquad::input::KeyCode;
 use crate::LOOK_SPEED;
 
@@ -39,8 +39,8 @@ pub fn spectator_mode_start(
     if is_key_down(KeyCode::Space) { mv += up_vector; }
     if is_key_down(KeyCode::LeftShift) { mv -= up_vector; }
 
-    if is_key_pressed(KeyCode::Minus) { *move_speed = (*move_speed - 1.0).max(0.1); }
-    if is_key_pressed(KeyCode::Equal) { *move_speed += 1.0; }
+    if is_key_down(KeyCode::Minus) { *move_speed = (*move_speed - 1.0).max(0.1); }
+    if is_key_down(KeyCode::Equal) { *move_speed += 1.0; }
 
     *player_position += mv * *move_speed * dt;
 
