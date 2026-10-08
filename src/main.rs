@@ -3,6 +3,9 @@ use macroquad::prelude::*;
 
 mod game;
 mod constant;
+use std::ops::RangeInclusive;
+
+use game::world_gen::loader::{ChunkLoader, default_workers};
 use game::world_gen::world::{View, World};
 
 use crate::game::player::settings::{RenderDistance, RenderSettings};
@@ -11,9 +14,13 @@ use crate::game::player::{character};
 use crate::game::world_gen::world_generation::generate_chunk;
 
 
-const LOOK_SPEED: f32 = 0.1;
+const LOOK_SPEED: f32 = 0.0225;
 /// Chunks meshed per frame while moving, so new terrain doesn't cause a stutter.
 const MESHES_PER_FRAME: usize = 16;
+/// Finished chunks taken from the worker threads per frame.
+const CHUNKS_PER_FRAME: usize = 16;
+/// Chunk layers that exist (cy). The world is unbounded sideways. Terrain peaks at y = 46.
+const WORLD_HEIGHT: RangeInclusive<i32> = -1..=1;
 
 
 
@@ -34,8 +41,9 @@ async fn main() {
     show_mouse(false);
     let mut move_speed: f32 = 5.0;
     let mut mouse_lock = true;
-    let render_settings: RenderSettings = RenderSettings { render_distance: RenderDistance { x: 8,y: 8, z: 8 } };
-    let mut world = World::new();
+    let render_settings: RenderSettings = RenderSettings { render_distance: RenderDistance { x: 16,y: 16, z: 16 } };
+    let mut world = World::streaming(WORLD_HEIGHT);
+    let mut loader = ChunkLoader::new(default_workers(), |(cx, cy, cz)| generate_chunk(cx, cy, cz, Voxel::DIRT));
     
     let mut player_position = vec3(0.0, 0.0, 0.0);
     
@@ -44,24 +52,13 @@ async fn main() {
     let up_vector = vec3(0.0, 1.0, 0.0);
     let mut last_mouse: Vec2 = mouse_position().into();
     
-    for cx in 0..16 {
-            for cz in 0..16 {
-            for cy in -1..1 {
-                    world.insert((cx, cy, cz), generate_chunk(cx, cy, cz, Voxel::DIRT));
-            }
-            
-        }
-    }
-
-    // mesh everything in view before the first frame, so nothing pops in at start-up
-    world.rebuild_dirty(&View::new(player_position, &render_settings.render_distance), usize::MAX);
-
     loop {
         let dt = get_frame_time();
         clear_background(SKYBLUE);
         
-        character::spectator_mode_start(mouse_lock, &mut move_speed, &mut last_mouse, &mut yaw, &mut pitch, dt, up_vector, &mut player_position);
-        let view = View::new(player_position, &render_settings.render_distance);
+        let camera = character::spectator_mode_start(mouse_lock, &mut move_speed, &mut last_mouse, &mut yaw, &mut pitch, dt, up_vector, &mut player_position);
+        let view = View::new(player_position, &render_settings.render_distance).looking_through(&camera);
+        loader.update(&mut world, &view, CHUNKS_PER_FRAME);
         
         // Drawing 3D
         unsafe {
@@ -82,6 +79,7 @@ async fn main() {
         draw_text(&format!("chunk: {}, {}, {}", cx, cy, cz), 10.0, 100.0, 24.0, WHITE);
         draw_text(&format!("yaw: {:.2}, pitch: {:.2}", yaw, pitch), 10.0, 60.0, 24.0, WHITE);
         draw_text(&format!("faces: {}", world.face_count(&view)), 10.0, 80.0, 24.0, WHITE);
+        draw_text(&format!("chunks: {} loaded, {} loading", world.chunks.len(), loader.in_flight()), 10.0, 120.0, 24.0, WHITE);
         if is_key_pressed(KeyCode::G) {
             if mouse_lock {
                 mouse_lock = false;

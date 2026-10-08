@@ -1,4 +1,4 @@
-pub const CHUNK_WIDTH: usize = 32;
+pub const CHUNK_WIDTH: usize = 16;
 /// Same value as `CHUNK_WIDTH`, for signed world-coordinate math.
 pub const CHUNK_WIDTH_I32: i32 = CHUNK_WIDTH as i32;
 

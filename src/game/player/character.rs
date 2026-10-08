@@ -11,7 +11,7 @@ pub fn spectator_mode_start(
     dt: f32,
     up_vector: Vec3,
     player_position: &mut Vec3,
-) {
+) -> Camera3D {
     if mouse_lock {
         let mouse: Vec2 = mouse_position().into();
         let mouse_delta = mouse - *last_mouse;
@@ -44,10 +44,12 @@ pub fn spectator_mode_start(
 
     *player_position += mv * *move_speed * dt;
 
-    set_camera(&Camera3D {
+    let camera = Camera3D {
         position: *player_position,
         target: *player_position + front,
         up: up_vector,
         ..Default::default()
-    });
+    };
+    set_camera(&camera);
+    camera
 }

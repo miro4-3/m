@@ -11,9 +11,9 @@ pub fn generate_chunk(chunk_x: i32, chunk_y: i32, chunk_z: i32, voxel: Voxel) ->
     let mut new_chunk = Chunk::new();
 
     // Adjust these to tweak terrain shape
-    let scale = 0.0125;       // Frequency: Smaller = smoother/wider hills, Larger = spiky terrain
-    let height_scale = 30.0; // Max amplitude/height of hills
-    let base_height = 16.0;   // Baseline Y level (sea/ground level offset)
+    let scale = 0.005;       // Frequency: Smaller = smoother/wider hills, Larger = spiky terrain
+    let height_scale = 312.0; // Max amplitude/height of hills
+    let base_height = 64.0;   // Baseline Y level (sea/ground level offset)
 
     let w = CHUNK_WIDTH as i32;
     for x in 0..CHUNK_WIDTH {
